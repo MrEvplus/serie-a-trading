@@ -8,28 +8,36 @@ st.set_page_config(page_title="Serie A Trading Dashboard", layout="wide")
 # -------------------------------
 # CARICAMENTO FILE EXCEL DAL REPO
 # -------------------------------
-# Carico SEMPRE il file Excel dal repository
 df_all = pd.read_excel("serie a 20-25.xlsx", sheet_name=None)
 df = list(df_all.values())[0]
 
 st.success("✅ File Excel caricato dal repository!")
 
-# Trasformazioni iniziali
-df["datameci"] = pd.to_datetime(df["datameci"], errors="coerce")
-df["goals_ft"] = df["scor1"] + df["scor2"]
-df["goals_1t"] = df["scorp1"] + df["scorp2"]
-df["goals_2t"] = df["goals_ft"] - df["goals_1t"]
+# Visualizza intestazioni per debug
+# st.write("Colonne trovate nel file:", df.columns.tolist())
 
-df["esito"] = np.where(
-    df["scor1"] > df["scor2"], "Win",
-    np.where(df["scor1"] == df["scor2"], "Draw", "Lose")
+# Conversione Data
+df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+
+# Calcoli base
+df["Goals FT"] = df["Home Goal FT"] + df["Away Goal FT"]
+df["Goals 1T"] = df["Home Goal 1T"] + df["Away Goal 1T"]
+df["Goals 2T"] = df["Goals FT"] - df["Goals 1T"]
+
+# Esito finale
+df["Esito"] = np.where(
+    df["Home Goal FT"] > df["Away Goal FT"], "Win",
+    np.where(df["Home Goal FT"] == df["Away Goal FT"], "Draw", "Lose")
 )
 
-df["btts"] = np.where(
-    (df["scor1"] > 0) & (df["scor2"] > 0), "Yes", "No"
+# BTTS
+df["BTTS"] = np.where(
+    (df["Home Goal FT"] > 0) & (df["Away Goal FT"] > 0),
+    "Yes", "No"
 )
 
-squadre = sorted(set(df["txtechipa1"]).union(df["txtechipa2"]))
+# Squadre uniche
+squadre = sorted(set(df["Home"]).union(df["Away"]))
 
 st.sidebar.title("🔍 Navigazione")
 page = st.sidebar.radio("Vai a:", ["Macro ROI Analysis", "Dashboard CornerProBet"])
@@ -60,72 +68,159 @@ if page == "Macro ROI Analysis":
 
     quota_tipo = st.selectbox(
         "Quota su cui calcolare ROI:",
-        ["cotaa (Home)", "cotae (Draw)", "cotad (Away)"]
+        ["Odd home", "Odd Draw", "Odd Away"]
     )
 
     if side == "Home":
-        df_team = df[df["txtechipa1"] == squadra_sel].copy()
+        df_team = df[df["Home"] == squadra_sel].copy()
     else:
-        df_team = df[df["txtechipa2"] == squadra_sel].copy()
+        df_team = df[df["Away"] == squadra_sel].copy()
 
-    if quota_tipo.startswith("cotaa"):
-        df_team["quota"] = df_team["cotaa"]
-        esito_match = "Win"
-    elif quota_tipo.startswith("cotae"):
-        df_team["quota"] = df_team["cotae"]
-        esito_match = "Draw"
-    else:
-        df_team["quota"] = df_team["cotad"]
-        esito_match = "Lose" if side == "Home" else "Win"
+    df_team["Quota"] = df_team[quota_tipo]
 
     mask = pd.Series(False, index=df_team.index)
     for r in quota_sel:
         min_q, max_q = quota_ranges[r]
-        mask |= (df_team["quota"] >= min_q) & (df_team["quota"] <= max_q)
+        mask |= (df_team["Quota"] >= min_q) & (df_team["Quota"] <= max_q)
 
     df_team = df_team[mask]
 
     st.write(f"Partite trovate: {len(df_team)}")
 
     if len(df_team) > 0:
-        df_team["back_profit"] = np.where(
-            df_team["esito"] == esito_match,
-            (df_team["quota"] - 1) * 10,
+        if quota_tipo == "Odd home":
+            esito_match = "Win"
+        elif quota_tipo == "Odd Draw":
+            esito_match = "Draw"
+        else:
+            esito_match = "Lose" if side == "Home" else "Win"
+
+        df_team["Back Profit"] = np.where(
+            df_team["Esito"] == esito_match,
+            (df_team["Quota"] - 1) * 10,
             -10
         )
-        roi_back = df_team["back_profit"].sum() / (10 * len(df_team)) * 100
+        roi_back = df_team["Back Profit"].sum() / (10 * len(df_team)) * 100
 
-        df_team["lay_profit"] = np.where(
-            df_team["esito"] != esito_match,
+        df_team["Lay Profit"] = np.where(
+            df_team["Esito"] != esito_match,
             10,
-            - (df_team["quota"] - 1) * 10
+            - (df_team["Quota"] - 1) * 10
         )
-        roi_lay = df_team["lay_profit"].sum() / (10 * len(df_team)) * 100
+        roi_lay = df_team["Lay Profit"].sum() / (10 * len(df_team)) * 100
 
         st.metric("ROI Back", f"{roi_back:.2f}%")
         st.metric("ROI Lay", f"{roi_lay:.2f}%")
 
         st.dataframe(
             df_team[[
-                "datameci", "txtechipa1", "txtechipa2",
-                "quota", "scor1", "scor2", "esito"
-            ]].sort_values("datameci", ascending=False)
+                "Data", "Home", "Away", "Quota",
+                "Home Goal FT", "Away Goal FT", "Esito"
+            ]].sort_values("Data", ascending=False)
         )
+
+        # ------------------------------
+        # TIME FRAME ANALYSIS su df_team
+        # ------------------------------
+
+        st.subheader("⚽ Distribuzione Time Frame Goals (Squadra Selezionata)")
+
+        if side == "Home":
+            # Goals fatti = home goals
+            goal_cols_fatti = [
+                "home 1 goal segnato (min)",
+                "home 2 goal segnato(min)",
+                "home 3 goal segnato(min)",
+                "home 4 goal segnato(min)",
+                "home 5 goal segnato(min)",
+                "home 6 goal segnato(min)",
+                "home 7 goal segnato(min)",
+                "home 8 goal segnato(min)",
+                "home 9 goal segnato(min)"
+            ]
+            # Goals subiti = away goals
+            goal_cols_subiti = [
+                "1  goal away (min)",
+                "2  goal away (min)",
+                "3 goal away (min)",
+                "4  goal away (min)",
+                "5  goal away (min)",
+                "6  goal away (min)",
+                "7  goal away (min)",
+                "8  goal away (min)",
+                "9  goal away (min)"
+            ]
+        else:
+            # Goals fatti = away goals
+            goal_cols_fatti = [
+                "1  goal away (min)",
+                "2  goal away (min)",
+                "3 goal away (min)",
+                "4  goal away (min)",
+                "5  goal away (min)",
+                "6  goal away (min)",
+                "7  goal away (min)",
+                "8  goal away (min)",
+                "9  goal away (min)"
+            ]
+            # Goals subiti = home goals
+            goal_cols_subiti = [
+                "home 1 goal segnato (min)",
+                "home 2 goal segnato(min)",
+                "home 3 goal segnato(min)",
+                "home 4 goal segnato(min)",
+                "home 5 goal segnato(min)",
+                "home 6 goal segnato(min)",
+                "home 7 goal segnato(min)",
+                "home 8 goal segnato(min)",
+                "home 9 goal segnato(min)"
+            ]
+
+        # Stack goals fatti e subiti
+        goals_fatti = df_team[goal_cols_fatti].stack().dropna()
+        goals_subiti = df_team[goal_cols_subiti].stack().dropna()
+
+        bins = [0,15,30,45,60,75,90,120]
+        labels = ["0-15","16-30","31-45","46-60","61-75","76-90","91+"]
+
+        fatti_bins = pd.cut(goals_fatti, bins=bins, labels=labels, right=True)
+        fatti_counts = fatti_bins.value_counts(normalize=True).sort_index() * 100
+
+        subiti_bins = pd.cut(goals_subiti, bins=bins, labels=labels, right=True)
+        subiti_counts = subiti_bins.value_counts(normalize=True).sort_index() * 100
+
+        df_timeframe_db = pd.DataFrame({
+            "Time Frame": labels,
+            "Goals FATTI (%)": fatti_counts.reindex(labels).fillna(0).values,
+            "Goals SUBITI (%)": subiti_counts.reindex(labels).fillna(0).values
+        })
+
+        st.dataframe(df_timeframe_db)
+
+        fig_time_db = px.bar(
+            df_timeframe_db,
+            x="Time Frame",
+            y=["Goals FATTI (%)", "Goals SUBITI (%)"],
+            barmode="group",
+            title=f"Distribuzione Time Frame - {squadra_sel} ({side})"
+        )
+        st.plotly_chart(fig_time_db, use_container_width=True)
+
     else:
         st.info("Nessuna partita trovata per questi filtri.")
 
 # --------------------------
-# PAGE 2 - CORNERPROBET STYLE
+# PAGE 2 - DASHBOARD CORNERPROBET
 # --------------------------
 elif page == "Dashboard CornerProBet":
-    st.header("📊 Dashboard Stile CornerProBet")
+    st.header("📊 Dashboard stile CornerProBet")
 
     squadra_home = st.selectbox("Seleziona squadra HOME:", squadre)
     squadra_away = st.selectbox("Seleziona squadra AWAY:", squadre)
 
     mask = (
-        (df["txtechipa1"] == squadra_home) &
-        (df["txtechipa2"] == squadra_away)
+        (df["Home"] == squadra_home) &
+        (df["Away"] == squadra_away)
     )
     df_match = df[mask]
 
@@ -135,8 +230,8 @@ elif page == "Dashboard CornerProBet":
 
         # Correct Score Distribution
         st.subheader("Correct Score Distribution")
-        df_match["correct_score"] = df_match["scor1"].astype(str) + "-" + df_match["scor2"].astype(str)
-        score_counts = df_match["correct_score"].value_counts().reset_index()
+        df_match["Correct Score"] = df_match["Home Goal FT"].astype(str) + "-" + df_match["Away Goal FT"].astype(str)
+        score_counts = df_match["Correct Score"].value_counts().reset_index()
         score_counts.columns = ["Score", "Count"]
         score_counts["%"] = (score_counts["Count"] / score_counts["Count"].sum()) * 100
         st.dataframe(score_counts)
@@ -150,103 +245,83 @@ elif page == "Dashboard CornerProBet":
         st.plotly_chart(fig_score, use_container_width=True)
 
         # Over/Under
-        st.subheader("Over/Under Stats")
+        st.subheader("Over/Under FT")
         over_soglie = [0.5, 1.5, 2.5, 3.5, 4.5]
         over_data = []
         for soglia in over_soglie:
-            perc = (df_match["goals_ft"] > soglia).mean() * 100
+            perc = (df_match["Goals FT"] > soglia).mean() * 100
             over_data.append({"Over": f"Over {soglia}", "Percentage": perc})
-        df_over = pd.DataFrame(over_data)
-        fig_over = px.bar(df_over, x="Over", y="Percentage", title="Over/Under FT %")
+        fig_over = px.bar(pd.DataFrame(over_data), x="Over", y="Percentage")
         st.plotly_chart(fig_over, use_container_width=True)
 
-        # Over split 1T e 2T
-        st.subheader("Over per tempo")
-        over_data_1t = []
-        over_data_2t = []
-        for soglia in over_soglie:
-            perc_1t = (df_match["goals_1t"] > soglia).mean() * 100
-            perc_2t = (df_match["goals_2t"] > soglia).mean() * 100
-            over_data_1t.append({"Over": f"Over {soglia}", "Percentage": perc_1t})
-            over_data_2t.append({"Over": f"Over {soglia}", "Percentage": perc_2t})
-        fig_1t = px.bar(pd.DataFrame(over_data_1t), x="Over", y="Percentage", title="Over 1° Tempo %")
-        fig_2t = px.bar(pd.DataFrame(over_data_2t), x="Over", y="Percentage", title="Over 2° Tempo %")
-        st.plotly_chart(fig_1t, use_container_width=True)
-        st.plotly_chart(fig_2t, use_container_width=True)
-
         # BTTS
-        st.subheader("BTTS")
-        btts_pct = (df_match["btts"] == "Yes").mean() * 100
+        st.subheader("BTTS %")
+        btts_pct = (df_match["BTTS"] == "Yes").mean() * 100
         st.metric("BTTS %", f"{btts_pct:.2f}%")
 
-        # Time Frame Goals
-        st.subheader("First Goal Time Frame")
-        gh1 = df_match["gh1"].dropna()
-        ga1 = df_match["ga1"].dropna()
-        first_goals = pd.concat([gh1, ga1], ignore_index=True)
-        time_bins = [0,15,30,45,60,75,90,120]
-        bin_labels = ["0-15","16-30","31-45","46-60","61-75","76-90","91+"]
-        bins = pd.cut(first_goals, bins=time_bins, labels=bin_labels, include_lowest=True)
-        first_goal_counts = bins.value_counts(normalize=True).sort_index()*100
-        st.bar_chart(first_goal_counts)
+        # Time Frame Goals (Head-to-Head)
+        st.subheader("⚽ Time Frame Goals (Head-to-Head)")
 
-        # Goal Conversion Rate
-        st.subheader("Goal Conversion Rate")
-        total_shots = df_match["suth"].sum() + df_match["suta"].sum()
-        total_goals = df_match["scor1"].sum() + df_match["scor2"].sum()
-        conversion_rate = (total_goals / total_shots * 100) if total_shots > 0 else 0
-        st.metric("Goal Conversion %", f"{conversion_rate:.2f}%")
+        home_goal_cols = [
+            "home 1 goal segnato (min)",
+            "home 2 goal segnato(min)",
+            "home 3 goal segnato(min)",
+            "home 4 goal segnato(min)",
+            "home 5 goal segnato(min)",
+            "home 6 goal segnato(min)",
+            "home 7 goal segnato(min)",
+            "home 8 goal segnato(min)",
+            "home 9 goal segnato(min)"
+        ]
+        away_goal_cols = [
+            "1  goal away (min)",
+            "2  goal away (min)",
+            "3 goal away (min)",
+            "4  goal away (min)",
+            "5  goal away (min)",
+            "6  goal away (min)",
+            "7  goal away (min)",
+            "8  goal away (min)",
+            "9  goal away (min)"
+        ]
 
-        # Corners
-        st.subheader("Corners Analysis")
-        corner_mean_home = df_match["corh"].mean()
-        corner_mean_away = df_match["cora"].mean()
-        st.write(f"Corner medi HOME: {corner_mean_home:.2f}")
-        st.write(f"Corner medi AWAY: {corner_mean_away:.2f}")
+        goals_home = df_match[home_goal_cols].stack().dropna()
+        goals_away = df_match[away_goal_cols].stack().dropna()
 
-        # Yellow Cards
-        st.subheader("Yellow Cards")
-        yellow_home = df_match["yellowh"].mean()
-        yellow_away = df_match["yellowa"].mean()
-        st.write(f"Cartellini HOME: {yellow_home:.2f}")
-        st.write(f"Cartellini AWAY: {yellow_away:.2f}")
+        bins = [0,15,30,45,60,75,90,120]
+        labels = ["0-15","16-30","31-45","46-60","61-75","76-90","91+"]
 
-        # Possession
-        if "ballph" in df_match.columns and "ballpa" in df_match.columns:
-            st.subheader("Possession %")
-            poss_home = df_match["ballph"].mean()
-            poss_away = df_match["ballpa"].mean()
-            st.write(f"Possesso palla HOME: {poss_home:.2f}%")
-            st.write(f"Possesso palla AWAY: {poss_away:.2f}%")
+        home_timeframe = pd.cut(goals_home, bins=bins, labels=labels, right=True)
+        home_counts = home_timeframe.value_counts(normalize=True).sort_index() * 100
 
-        # Head-to-Head Aggregato
-        st.subheader("Head-to-Head Aggregato")
-        esiti_counts = df_match["esito"].value_counts(normalize=True) * 100
-        fig_esiti = px.pie(
-            names=esiti_counts.index,
-            values=esiti_counts.values,
-            title="Distribuzione risultati storici (Head-to-Head)"
+        away_timeframe = pd.cut(goals_away, bins=bins, labels=labels, right=True)
+        away_counts = away_timeframe.value_counts(normalize=True).sort_index() * 100
+
+        df_timeframe = pd.DataFrame({
+            "Time Frame": labels,
+            "Goals Home (%)": home_counts.reindex(labels).fillna(0).values,
+            "Goals Away (%)": away_counts.reindex(labels).fillna(0).values
+        })
+
+        st.dataframe(df_timeframe)
+
+        fig_time = px.bar(
+            df_timeframe,
+            x="Time Frame",
+            y=["Goals Home (%)", "Goals Away (%)"],
+            barmode="group",
+            title="Distribuzione Time Frame Goals (Head-to-Head)"
         )
-        st.plotly_chart(fig_esiti, use_container_width=True)
-
-        # Gol tardivi
-        st.subheader("Gol Tardivi (dopo 76')")
-        late_goals = pd.concat([
-            df_match.loc[:, ["gh1","gh2","gh3","gh4","gh5","gh6","gh7","gh8","gh9"]],
-            df_match.loc[:, ["ga1","ga2","ga3","ga4","ga5","ga6","ga7","ga8","ga9"]]
-        ], axis=1).stack().dropna()
-        late_goals_pct = (late_goals > 75).mean() * 100
-        st.metric("Gol dopo 76° minuto", f"{late_goals_pct:.2f}%")
+        st.plotly_chart(fig_time, use_container_width=True)
 
         # Head-to-Head dettaglio
         st.subheader("Head-to-Head Dettaglio")
         st.dataframe(
             df_match[[
-                "datameci", "txtechipa1", "txtechipa2",
-                "scor1", "scor2"
-            ]].sort_values("datameci", ascending=False)
+                "Data", "Home", "Away",
+                "Home Goal FT", "Away Goal FT"
+            ]].sort_values("Data", ascending=False)
         )
+
     else:
         st.info("Nessuna partita trovata fra queste squadre.")
-else:
-    st.info("Caricamento file Excel non riuscito.")
