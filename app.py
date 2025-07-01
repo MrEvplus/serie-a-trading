@@ -7,19 +7,12 @@ st.set_page_config(layout="wide")
 
 st.title("⚽ Serie A Trading Dashboard")
 
-# Carica file dati
-uploaded_file = st.file_uploader("Carica file Excel o CSV", type=["xlsx", "xls", "csv"])
+# Carico il file Excel direttamente dal repo
+df_all = pd.read_excel("serie a 20-25.xlsx", sheet_name=None)
+df = list(df_all.values())[0]
 
-if uploaded_file is not None:
-    # Caricamento dati
-    if uploaded_file.name.endswith("csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file, sheet_name=None)
-        # Assumiamo ci sia un solo foglio
-        df = list(df.values())[0]
-    
-    st.success("File caricato con successo!")
+st.success("File Excel caricato dal repository!")
+
 
     # Prepariamo i dati
     df["datameci"] = pd.to_datetime(df["datameci"], errors='coerce')
